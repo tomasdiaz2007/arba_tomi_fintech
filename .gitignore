@@ -1,5 +1,5 @@
 node_modules/
 arba.db
 arba.db-*
-data/
+/data/
 .env
