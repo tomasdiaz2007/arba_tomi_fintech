@@ -2,9 +2,15 @@
  * Vercel Serverless Function — API entry point.
  * Uses an in-memory store instead of better-sqlite3 (which requires native
  * binaries that are not available in Vercel's Lambda environment).
+ * Self-contained: no imports outside this file.
  */
 const express = require('express');
-const { validarCuit, validarMonto, validarIdVenta, round2 } = require('../src/validate');
+
+// ─── Inline helpers (mirrors src/validate.js) ────────────────────────────────
+function validarCuit(cuit)       { return typeof cuit === 'string' && /^\d{11}$/.test(cuit); }
+function validarMonto(monto)     { return typeof monto === 'number' && Number.isFinite(monto) && monto > 0; }
+function validarIdVenta(idVenta) { return typeof idVenta === 'string' && idVenta.trim().length > 0; }
+function round2(value)           { return Math.round((value + Number.EPSILON) * 100) / 100; }
 
 // ─── In-memory store ────────────────────────────────────────────────────────
 const PADRON = [
@@ -27,11 +33,12 @@ let nextId = 1;
 const app = express();
 app.use(express.json());
 
-// Health
-app.get('/health', (req, res) => res.status(200).json({ status: 'ok', servicio: 'arba' }));
+// Health — the client calls /api/health which Vercel rewrites to this function
+// Express receives the full path including /api prefix
+app.get(['/health', '/api/health'], (req, res) => res.status(200).json({ status: 'ok', servicio: 'arba' }));
 
-// GET /arba/padron
-app.get('/arba/padron', (req, res) => {
+// GET /api/arba/padron
+app.get(['/arba/padron', '/api/arba/padron'], (req, res) => {
   const page  = parseInt(req.query.page  || '1',  10);
   const limit = parseInt(req.query.limit || '10', 10);
   if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -44,8 +51,8 @@ app.get('/arba/padron', (req, res) => {
   return res.status(200).json({ page, limit, total: PADRON.length, items });
 });
 
-// GET /arba/padron/:cuit
-app.get('/arba/padron/:cuit', (req, res) => {
+// GET /api/arba/padron/:cuit
+app.get(['/arba/padron/:cuit', '/api/arba/padron/:cuit'], (req, res) => {
   const { cuit } = req.params;
   if (!validarCuit(cuit)) return res.status(400).json({ error: 'cuit invalido' });
   const row = PADRON.find(r => r.cuit === cuit);
@@ -53,8 +60,8 @@ app.get('/arba/padron/:cuit', (req, res) => {
   return res.status(200).json({ cuit: row.cuit, actividad: row.actividad, alicuota: row.alicuota, razon_social: row.razon_social });
 });
 
-// POST /arba/percepciones
-app.post('/arba/percepciones', (req, res) => {
+// POST /api/arba/percepciones
+app.post(['/arba/percepciones', '/api/arba/percepciones'], (req, res) => {
   const { id_venta, cuit, monto_venta } = req.body || {};
   if (!validarIdVenta(id_venta))  return res.status(400).json({ error: 'id_venta invalido' });
   if (!validarCuit(cuit))         return res.status(400).json({ error: 'cuit invalido' });
@@ -84,8 +91,8 @@ app.post('/arba/percepciones', (req, res) => {
   return res.status(201).json(nueva);
 });
 
-// GET /arba/percepciones/:cuit
-app.get('/arba/percepciones/:cuit', (req, res) => {
+// GET /api/arba/percepciones/:cuit
+app.get(['/arba/percepciones/:cuit', '/api/arba/percepciones/:cuit'], (req, res) => {
   const { cuit } = req.params;
   if (!validarCuit(cuit)) return res.status(400).json({ error: 'cuit invalido' });
   const filtradas = percepciones.filter(p => p.cuit === cuit);
