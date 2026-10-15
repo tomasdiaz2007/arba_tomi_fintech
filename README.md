@@ -1,146 +1,190 @@
-# Módulo ARBA — percepción de IIBB
+# Módulo ARBA — Percepción de IIBB y Visualizador Web
 
-Servicio del Ecosistema Fintech simulado. Escucha en el puerto `3003`, mantiene
-un padrón local y calcula la percepción de IIBB de cada venta.
+Servicio y consola de visualización del **Ecosistema Fintech simulado** (proyecto académico). Mantiene un padrón provincial ficticio y calcula la percepción de Ingresos Brutos (IIBB) de cada venta generada por las terminales de punto de venta (TPV).
 
-Las alícuotas incluidas son **ficticias, deterministas y configurables para la
-actividad**. No representan valores fiscales reales. La alícuota se expresa
-como fracción decimal: `0.03` equivale a 3%.
+> **Aviso institucional:** Todas las alícuotas, razones sociales, CUITs y cálculos mostrados son **datos ficticios y deterministas** para uso académico. No representan valores fiscales reales de ARBA ni una conexión con organismos oficiales. La alícuota se expresa y almacena como fracción decimal: `0.03` equivale a 3%.
 
-## Stack y configuración
+---
 
-- Node.js 18+ y Express.
-- SQLite mediante `better-sqlite3`.
-- Base propia en `arba.db`.
+## 1. Arquitectura del Sistema
 
-| Variable | Default | Descripción |
-|---|---|---|
-| `PORT` | `3003` | Puerto HTTP |
-| `DB_PATH` | `./arba.db` | Ruta de SQLite; usar `:memory:` en pruebas |
-| `PADRON_SEED_JSON` | seed incluido | JSON opcional para reemplazar el padrón ficticio |
+El proyecto está organizado en dos componentes claramente desacoplados:
 
-Ejemplo de seed configurable:
+- **Frontend (Consola React + Vite)**: Corre en el puerto `3000` (`http://localhost:3000`). Proporciona una interfaz gráfica moderna (estilo *fintech dark console*) para consultar el padrón, simular transacciones del TPV, verificar idempotencia y auditar operaciones.
+- **Backend (API REST Express + SQLite)**: Corre en el puerto `3003` (`http://localhost:3003`). Gestiona la base de datos `arba.db`, valida esquemas fiscales y persiste transacciones.
 
-```json
-[{"cuit":"30712345678","actividad":"Comercio minorista","alicuota":0.03}]
+### Flujo de la Transacción en el Ecosistema
+
+```text
+TPV (Punto de Venta) ──► envía CUIT y monto ──► ARBA (consulta padrón IIBB)
+                                             ──► aplica alícuota decimal
+                                             ──► registra percepción en BD
+                                             ──► devuelve resultado al TPV
+TPV ───────────────────► envía datos a ARCA ─► ARCA emite factura fiscal con CAE
 ```
 
-## Ejecución
+> **Delimitación de responsabilidades:** ARBA **únicamente calcula y registra** la percepción correspondiente a la provincia. No cobra dinero (responsabilidad de la pasarela de pagos) ni emite facturas con CAE (responsabilidad de ARCA / AFIP).
+
+---
+
+## 2. Instalación y Ejecución
+
+### Requisitos previos
+- Node.js 18+ (compatible con Node 22)
+- npm
+
+### Instalación de dependencias
 
 ```bash
 npm install
+```
+
+### Ejecutar el Frontend (Dashboard Visual)
+
+```bash
+npm run dev
+```
+
+El visualizador quedará accesible en `http://localhost:3000`.
+
+### Ejecutar el Backend ARBA
+
+En otra terminal:
+
+```bash
+npm run start:backend
+# O alternativamente:
 npm start
 ```
 
-## API
+El servicio REST quedará escuchando en `http://localhost:3003`.
 
-Todas las respuestas son JSON y los errores tienen la forma:
+---
 
-```json
-{"error":"mensaje"}
+## 3. Modos de Operación del Dashboard
+
+La interfaz cuenta con un selector explícito en el encabezado:
+
+### A. Modo API
+- Consume directamente el backend ARBA en `http://localhost:3003`.
+- En desarrollo, utiliza el proxy interno de Vite (`/api/arba/... → http://localhost:3003/arba/...` y `/api/health → http://localhost:3003/health`), resolviendo problemas de CORS.
+- **Comportamiento ante fallas:** Si el backend no está disponible, la interfaz **no cambia automáticamente a Demo ni inventa resultados silenciosos**. Muestra un cartel rojo de `API desconectada`, indicando el error de conexión y permitiendo al usuario decidir si reintentar o cambiar voluntariamente a Modo Demo.
+
+### B. Modo Demo
+- Simulación 100% en memoria para pruebas sin backend.
+- Utiliza el padrón determinista `PADRON_DEMO` (5 contribuyentes).
+- Reproduce con exactitud todas las reglas de negocio del backend:
+  - Registro de percepción (`201 Created`).
+  - Reintento idéntico por `id_venta` (`200 OK` sin duplicar).
+  - Conflicto por `id_venta` alterando monto o CUIT (`409 Conflict`).
+  - CUIT no encontrado en padrón (`404 Not Found`).
+  - Parámetros inválidos (`400 Bad Request`).
+  - Persistencia durante la sesión de navegación.
+
+---
+
+## 4. Configuración de Variables de Entorno
+
+Crear un archivo `.env` o `.env.local` según sea necesario:
+
+```env
+# Backend
+PORT=3003
+DB_PATH=./arba.db
+# Opcional para pruebas en memoria del backend:
+# DB_PATH=:memory:
+
+# Frontend (opcional si se desea sobreescribir la URL del backend)
+VITE_API_BASE_URL=/api
 ```
 
-### `GET /health`
+También es posible modificar la `API_BASE_URL` en tiempo real desde el botón de configuración (ícono de engranaje) en el encabezado de la aplicación.
+
+---
+
+## 5. Especificación del Contrato REST
+
+Todas las respuestas son JSON y los errores siguen la forma:
 
 ```json
-{"status":"ok","servicio":"arba"}
+{ "error": "mensaje" }
 ```
 
-### `GET /arba/padron/{cuit}`
+### Endpoints Oficiales
 
-Ejemplo:
+| Método | Endpoint | Parámetros / Body | Respuestas HTTP | Descripción |
+|---|---|---|---|---|
+| `GET` | `/health` | — | `200` | Estado de salud del servicio |
+| `GET` | `/arba/padron/{cuit}` | `cuit` en ruta | `200`, `400`, `404` | Consulta alícuota de un CUIT |
+| `GET` | `/arba/padron?page=1&limit=10` | `page`, `limit` en query | `200`, `400` | Listado paginado del padrón |
+| `POST` | `/arba/percepciones` | `{ id_venta, cuit, monto_venta }` | `201`, `200`, `400`, `404`, `409` | Calcula y registra la percepción |
+| `GET` | `/arba/percepciones/{cuit}` | `cuit` en ruta | `200`, `400` | Historial de auditoría para un CUIT |
 
-```json
-{
-  "cuit": "30712345678",
-  "actividad": "Comercio minorista",
-  "alicuota": 0.03
-}
+### Reglas de Negocio
+- `monto_percepcion = round2(monto_venta * alicuota)`.
+- Todos los importes monetarios se redondean a 2 decimales.
+- El CUIT se maneja siempre como string de 11 dígitos numéricos.
+- La alícuota se almacena y opera como fracción decimal (`0.03` = 3%).
+- **Idempotencia estricta por `id_venta`**:
+  - Repetir la solicitud con mismo `id_venta`, CUIT y monto devuelve `200 OK` con el registro preexistente (sin duplicar).
+  - Repetir el mismo `id_venta` con un CUIT o monto distinto devuelve `409 Conflict`.
+
+---
+
+## 6. Seed Ficticio Académico
+
+| CUIT | Razón Social | Actividad Económica | Alícuota | Porcentaje | Condición |
+|---|---|---|---:|---:|---|
+| `30712345678` | Comercio Demo Uno | Comercio minorista | `0.03` | 3,00% | Contribuyente |
+| `27304567891` | Servicios Demo Dos | Servicios profesionales | `0.02` | 2,00% | Contribuyente |
+| `30556789012` | Alimentos Demo Tres | Producción de alimentos | `0.015` | 1,50% | Contribuyente |
+| `20123456789` | Librería Demo Cuatro | Librería | `0.03` | 3,00% | Contribuyente |
+| `30678901234` | Mayorista Demo Cinco | Comercio mayorista | `0` | 0,00% | Exento |
+
+---
+
+## 7. Pruebas y Validación
+
+### Pruebas Automatizadas del Backend
+
+```bash
+npm test
 ```
 
-Responde `400` para CUIT inválido y `404` si no existe.
+Ejecuta los 10 tests unitarios con el runner nativo `node --test` verificando salud, padrón, errores 400/404, cálculos, redondeos, idempotencia 200 y conflicto 409.
 
-### `GET /arba/padron?page=1&limit=10`
+### Matriz de Pruebas Manuales en la Interfaz
 
-```json
-{
-  "page": 1,
-  "limit": 10,
-  "total": 5,
-  "items": [
-    {"cuit":"20123456789","actividad":"Librería","alicuota":0.03}
-  ]
-}
-```
+1. **Chequeo de Salud (`/health`)**:
+   - En Modo API con backend activo: badge verde `API conectada` con latencia.
+   - En Modo API con backend caído: badge rojo `API desconectada` y banner de alerta.
+   - En Modo Demo: badge ámbar `Modo demo activo`.
+2. **Alternancia de Modos**:
+   - Cambiar de Demo a API: la interfaz reconecta inmediatamente sin recargar la página.
+   - Cambiar de API a Demo: pasa a simulación en memoria sin perder los registros cargados.
+3. **Consulta de Padrón**:
+   - CUIT conocido: ingresar `30712345678` y verificar alícuota `0.03` (3,00%).
+   - CUIT inexistente: ingresar `11111111111` y verificar error `404 CUIT no encontrado en padrón`.
+   - CUIT con guiones o formato inválido: ingresar `30-71234567-8` en simulación y verificar error `400 CUIT inválido`.
+4. **Búsqueda y Paginación**:
+   - Probar el buscador local escribiendo "alimentos" o "27304567891".
+   - Cambiar el selector de filas por página a 5 o 10.
+5. **Simulación de Percepción**:
+   - **Cálculo nuevo (`201`)**: `id_venta: "venta-auto-1"`, `cuit: "30712345678"`, `monto_venta: 10200.00`. Debe devolver `201 Created` con percepción `$306,00`.
+   - **Previsualización**: Observar que la sección *"Estimación visual previa"* calcula el monto antes del envío y aclara que es una estimación.
+   - **Reintento idéntico (`200`)**: Enviar nuevamente exactamente la misma solicitud. Debe devolver `200 OK` con badge azul *"Reintento idempotente"* sin crear un nuevo registro.
+   - **Conflicto (`409`)**: Modificar el monto a `15000` conservando el mismo `id_venta`. Debe devolver `409 Conflicto de id_venta`.
+   - **Monto cero o negativo**: Intentar enviar monto `<= 0` y verificar error `400`.
+6. **Historial de Auditoría**:
+   - Verificar que las percepciones creadas aparecen en la tabla de auditoría con su origen (`API` o `Demo`).
+   - Hacer clic en el ícono de código para abrir el modal inspector del JSON completo.
+   - Usar el botón *"Consultar CUIT"* en auditoría para invocar `GET /arba/percepciones/{cuit}`.
 
-`limit` acepta valores entre 1 y 100.
+---
 
-### `POST /arba/percepciones`
-
-Request:
-
-```json
-{
-  "id_venta": "venta-1",
-  "cuit": "30712345678",
-  "monto_venta": 10200.00
-}
-```
-
-Response `201`:
-
-```json
-{
-  "id": 1,
-  "id_venta": "venta-1",
-  "cuit": "30712345678",
-  "monto_venta": 10200,
-  "alicuota_aplicada": 0.03,
-  "monto_percepcion": 306,
-  "fecha": "2026-10-06T12:00:00.000Z"
-}
-```
-
-Los importes se redondean a dos decimales. La operación es idempotente por
-`id_venta`:
-
-- misma clave y mismos datos: `200`, devuelve el registro original;
-- misma clave con otro CUIT o monto: `409`;
-- CUIT inexistente: `404`;
-- `id_venta`, CUIT o monto inválidos: `400`.
-
-### `GET /arba/percepciones/{cuit}`
-
-Endpoint adicional de auditoría que devuelve el historial registrado para un
-CUIT.
-
-## Seed ficticio
-
-El padrón inicial contiene cinco contribuyentes de prueba. Las alícuotas son
-ejemplos de la actividad y no datos oficiales:
-
-| CUIT | Actividad | Alícuota de ejemplo |
-|---|---|---:|
-| `30712345678` | Comercio minorista | `0.03` |
-| `27304567891` | Servicios profesionales | `0.02` |
-| `30556789012` | Producción de alimentos | `0.015` |
-| `20123456789` | Librería | `0.03` |
-| `30678901234` | Comercio mayorista | `0` |
-
-## Docker
+## 8. Despliegue con Docker
 
 ```bash
 docker build -t arba .
 docker run -p 3003:3003 -v arba-data:/data arba
-```
-
-El contenedor utiliza `/data/arba.db` para persistencia.
-
-## Pruebas
-
-Las pruebas cubren salud, padrón conocido/no encontrado, paginación, CUIT
-inválido, cálculo, redondeo, repetición idempotente y conflicto `409`.
-
-```bash
-npm test
 ```
