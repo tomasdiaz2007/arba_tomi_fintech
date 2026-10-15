@@ -1,4 +1,4 @@
-import { PADRON_DEMO, INITIAL_PERCEPCIONES_DEMO } from '../data/demoData';
+import { PADRON_DEMO, INITIAL_PERCEPCIONES_DEMO } from '../data/demoData.js';
 import { round2 } from '../utils/formatters';
 
 const STORAGE_KEY = 'arba_demo_percepciones_v1';
